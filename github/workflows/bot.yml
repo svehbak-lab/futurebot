@@ -69,8 +69,11 @@ jobs:
 
       - name: Place orders
         env:
-          TURSO_URL:   ${{ secrets.TURSO_URL }}
-          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+          TURSO_URL:    ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN:  ${{ secrets.TURSO_TOKEN }}
+          LIVE_TRADING: ${{ secrets.LIVE_TRADING }}
+          SAXO_TOKEN:   ${{ secrets.SAXO_TOKEN }}
+          SAXO_ACCOUNT: ${{ secrets.SAXO_ACCOUNT }}
         run: python src/place_orders.py
 
       - name: Commit positions
@@ -100,8 +103,11 @@ jobs:
 
       - name: Exit positions
         env:
-          TURSO_URL:   ${{ secrets.TURSO_URL }}
-          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+          TURSO_URL:    ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN:  ${{ secrets.TURSO_TOKEN }}
+          LIVE_TRADING: ${{ secrets.LIVE_TRADING }}
+          SAXO_TOKEN:   ${{ secrets.SAXO_TOKEN }}
+          SAXO_ACCOUNT: ${{ secrets.SAXO_ACCOUNT }}
         run: python src/exit_positions.py
 
       - name: Commit results
