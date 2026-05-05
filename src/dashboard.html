@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FutureBot Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #f8f9fa; color: #111827; }
+  .header { background: #1B4F8A; color: white; padding: 1.25rem 2rem;
+            display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
+  .header .sub { font-size: 0.78rem; opacity: 0.7; margin-top: 2px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+  .kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-bottom: 2rem; }
+  .kpi { background: white; border: 1px solid #e5e7eb; border-radius: 12px;
+         padding: 1rem 1.25rem; }
+  .kpi .label { font-size: 0.65rem; font-weight: 700; color: #9ca3af;
+                text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.4rem; }
+  .kpi .value { font-size: 1.5rem; font-weight: 700; font-family: 'DM Mono', monospace;
+                color: #111827; }
+  .kpi .value.pos { color: #16a34a; }
+  .kpi .value.neg { color: #dc2626; }
+  .section { background: white; border: 1px solid #e5e7eb; border-radius: 12px;
+             padding: 1.5rem; margin-bottom: 1.5rem; }
+  .section h2 { font-size: 0.85rem; font-weight: 700; color: #374151;
+                text-transform: uppercase; letter-spacing: 0.06em;
+                border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem;
+                margin-bottom: 1rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+  th { text-align: left; padding: 0.4rem 0.6rem; font-size: 0.7rem; font-weight: 700;
+       color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em;
+       border-bottom: 1.5px solid #e5e7eb; }
+  td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #f3f4f6; }
+  td.mono { font-family: 'DM Mono', monospace; }
+  td.pos { color: #16a34a; font-weight: 600; font-family: 'DM Mono', monospace; }
+  td.neg { color: #dc2626; font-weight: 600; font-family: 'DM Mono', monospace; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px;
+           font-size: 0.7rem; font-weight: 700; }
+  .badge.open { background: #dbeafe; color: #1d4ed8; }
+  .badge.closed { background: #f3f4f6; color: #6b7280; }
+  .badge.stop { background: #fee2e2; color: #dc2626; }
+  .chart-wrap { height: 280px; position: relative; }
+  .empty { color: #9ca3af; font-size: 0.85rem; padding: 1rem 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="h1">⚡ FutureBot</div>
+    <div class="sub">Paper trading — vs_sector divergence strategy</div>
+  </div>
+  <div style="font-size:0.8rem;opacity:0.8" id="last-updated"></div>
+</div>
+
+<div class="container">
+
+  <div class="kpi-row" id="kpis">
+    <div class="kpi"><div class="label">Portfolio Value</div><div class="value" id="kpi-value">—</div></div>
+    <div class="kpi"><div class="label">Total Return</div><div class="value" id="kpi-return">—</div></div>
+    <div class="kpi"><div class="label">Cash</div><div class="value" id="kpi-cash">—</div></div>
+    <div class="kpi"><div class="label">Open Positions</div><div class="value" id="kpi-open">—</div></div>
+    <div class="kpi"><div class="label">Win Rate</div><div class="value" id="kpi-winrate">—</div></div>
+  </div>
+
+  <div class="section">
+    <h2>Portfolio Growth</h2>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <h2>Open Positions</h2>
+    <div id="open-positions-wrap"></div>
+  </div>
+
+  <div class="section">
+    <h2>Trade History</h2>
+    <div id="trade-history-wrap"></div>
+  </div>
+
+</div>
+
+<script>
+async function loadCSV(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const text = await r.text();
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(',');
+    return lines.slice(1).map(l => {
+      const vals = l.split(',');
+      return Object.fromEntries(headers.map((h, i) => [h, vals[i]]));
+    });
+  } catch { return []; }
+}
+
+async function loadJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function fmt(n) { return Number(n).toLocaleString('no-NO', {maximumFractionDigits: 0}); }
+function fmtPct(n) { const v = Number(n); return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+function pctClass(n) { return Number(n) >= 0 ? 'pos' : 'neg'; }
+
+async function init() {
+  const portfolio = await loadJSON('data/portfolio.json');
+  const positions = await loadJSON('data/positions.json') || [];
+  const history   = await loadCSV('data/portfolio_history.csv');
+  const trades    = await loadCSV('data/trade_log.csv');
+
+  // KPIs
+  const start = portfolio?.start_capital || 100000;
+  const cash  = portfolio?.cash || start;
+
+  // Calculate open positions value (use last known entry price as proxy)
+  const open = positions.filter(p => p.status === 'open');
+  const openValue = open.reduce((s, p) => s + (Number(p.invested) || 0), 0);
+  const totalValue = history.length > 0
+    ? Number(history[history.length - 1].portfolio_value)
+    : cash + openValue;
+  const totalPct = (totalValue - start) / start * 100;
+
+  document.getElementById('kpi-value').textContent  = 'NOK ' + fmt(totalValue);
+  const retEl = document.getElementById('kpi-return');
+  retEl.textContent = fmtPct(totalPct);
+  retEl.className = 'value ' + (totalPct >= 0 ? 'pos' : 'neg');
+  document.getElementById('kpi-cash').textContent   = 'NOK ' + fmt(cash);
+  document.getElementById('kpi-open').textContent   = open.length;
+
+  const closed = trades.filter(t => t.exit_reason);
+  const wins   = closed.filter(t => Number(t.pnl) > 0);
+  const wr     = closed.length > 0 ? (wins.length / closed.length * 100).toFixed(0) + '%' : '—';
+  document.getElementById('kpi-winrate').textContent = wr;
+
+  document.getElementById('last-updated').textContent =
+    'Updated: ' + new Date().toLocaleString('no-NO');
+
+  // Chart
+  if (history.length > 0) {
+    const ctx = document.getElementById('chart').getContext('2d');
+    const labels = history.map(r => r.date);
+    const values = history.map(r => Number(r.portfolio_value));
+    // Add start point
+    labels.unshift(portfolio?.created || '2026-05-05');
+    values.unshift(start);
+
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Portfolio Value',
+          data: values,
+          borderColor: '#1B4F8A',
+          backgroundColor: 'rgba(27,79,138,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+        }, {
+          label: 'Start (NOK 100,000)',
+          data: labels.map(() => start),
+          borderColor: '#e5e7eb',
+          borderDash: [4, 4],
+          pointRadius: 0,
+          fill: false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { grid: { color: '#f3f4f6' }, ticks: {
+            font: { size: 10 },
+            callback: v => 'NOK ' + fmt(v)
+          }}
+        }
+      }
+    });
+  } else {
+    document.querySelector('.chart-wrap').innerHTML =
+      '<div class="empty">No history yet — data will appear after first trade cycle</div>';
+  }
+
+  // Open positions table
+  const openWrap = document.getElementById('open-positions-wrap');
+  if (open.length === 0) {
+    openWrap.innerHTML = '<div class="empty">No open positions</div>';
+  } else {
+    openWrap.innerHTML = `
+      <table>
+        <tr>
+          <th>Ticker</th><th>Name</th><th>Entry Date</th><th>Exit Date</th>
+          <th>Entry Price</th><th>Stop</th><th>Invested</th><th>Score</th>
+        </tr>
+        ${open.map(p => `
+        <tr>
+          <td class="mono"><strong>${p.ticker}</strong></td>
+          <td>${p.name}</td>
+          <td class="mono">${p.entry_date}</td>
+          <td class="mono">${p.exit_date || '—'}</td>
+          <td class="mono">${Number(p.entry_price).toFixed(2)}</td>
+          <td class="mono" style="color:#dc2626">${Number(p.stop_price).toFixed(2)}</td>
+          <td class="mono">NOK ${fmt(p.invested)}</td>
+          <td class="mono">${Number(p.div_score).toFixed(3)}</td>
+        </tr>`).join('')}
+      </table>`;
+  }
+
+  // Trade history table
+  const histWrap = document.getElementById('trade-history-wrap');
+  if (trades.length === 0) {
+    histWrap.innerHTML = '<div class="empty">No completed trades yet</div>';
+  } else {
+    const sorted = [...trades].reverse();
+    histWrap.innerHTML = `
+      <table>
+        <tr>
+          <th>Ticker</th><th>Name</th><th>Entry</th><th>Exit</th>
+          <th>Entry Price</th><th>Exit Price</th><th>P&L</th><th>Return</th><th>Reason</th>
+        </tr>
+        ${sorted.map(t => {
+          const pct = Number(t.pnl_pct);
+          const cls = pct >= 0 ? 'pos' : 'neg';
+          const reason = t.exit_reason === 'stop_loss'
+            ? '<span class="badge stop">Stop</span>'
+            : '<span class="badge closed">Hold</span>';
+          return `<tr>
+            <td class="mono"><strong>${t.ticker}</strong></td>
+            <td>${t.name}</td>
+            <td class="mono">${t.entry_date}</td>
+            <td class="mono">${t.exit_date}</td>
+            <td class="mono">${Number(t.entry_price).toFixed(2)}</td>
+            <td class="mono">${Number(t.exit_price).toFixed(2)}</td>
+            <td class="${cls}">NOK ${fmt(t.pnl)}</td>
+            <td class="${cls}">${fmtPct(t.pnl_pct)}</td>
+            <td>${reason}</td>
+          </tr>`;
+        }).join('')}
+      </table>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
