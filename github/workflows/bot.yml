@@ -1,0 +1,115 @@
+name: FutureBot Trading
+
+on:
+  schedule:
+    # Signal reader — 21:10 UTC = 23:10 Oslo, after sentiment pipeline + sync
+    - cron: "10 21 * * 1-5"
+    # Place orders — 07:00 UTC = 09:00 Oslo
+    - cron: "0 7 * * 1-5"
+    # Exit positions — 14:20 UTC = 16:20 Oslo
+    - cron: "20 14 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Which action to run"
+        required: true
+        default: "signal_reader"
+        type: choice
+        options:
+          - signal_reader
+          - place_orders
+          - exit_positions
+
+jobs:
+  signal_reader:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'signal_reader' ||
+      github.event_name == 'schedule' && startsWith(github.event.schedule, '10 21')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read signals
+        env:
+          TURSO_URL:   ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+        run: python src/signal_reader.py
+
+      - name: Commit signals
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "bot: signals $(date '+%Y-%m-%d')"
+          git fetch origin main
+          git rebase origin/main
+          git push
+
+  place_orders:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'place_orders' ||
+      github.event_name == 'schedule' && startsWith(github.event.schedule, '0 7')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Place orders
+        env:
+          TURSO_URL:   ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+        run: python src/place_orders.py
+
+      - name: Commit positions
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "bot: orders $(date '+%Y-%m-%d')"
+          git fetch origin main
+          git rebase origin/main
+          git push
+
+  exit_positions:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'exit_positions' ||
+      github.event_name == 'schedule' && startsWith(github.event.schedule, '20 14')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Exit positions
+        env:
+          TURSO_URL:   ${{ secrets.TURSO_URL }}
+          TURSO_TOKEN: ${{ secrets.TURSO_TOKEN }}
+        run: python src/exit_positions.py
+
+      - name: Commit results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "bot: exits $(date '+%Y-%m-%d')"
+          git fetch origin main
+          git rebase origin/main
+          git push
